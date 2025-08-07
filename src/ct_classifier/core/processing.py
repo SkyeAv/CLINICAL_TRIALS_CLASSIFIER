@@ -3,7 +3,7 @@ from sklearn.preprocessing import StandardScaler
 from functools import lru_cache, partial
 from contextlib import contextmanager
 from typing import ContextManager
-from torchdr import PACMAP
+from torchdr import KernelPCA
 from pathlib import Path
 from typing import Any
 from tqdm import tqdm
@@ -158,8 +158,8 @@ def text_fields(
     min_cutoff: int = 1,
     biobert_embedding_cutoff: int = 15,
 ) -> tuple[pl.DataFrame, list[str], torch.Tensor, list[str]]:
-    pacmap_cache: Path = CACHE_PATH / "PACMAP" / version / tablename
-    pacmap_cache.mkdir(parents=True, exist_ok=True)
+    pca_cache: Path = CACHE_PATH / "PCA" / version / tablename
+    pca_cache.mkdir(parents=True, exist_ok=True)
     texts: list[str] = [
         colname
         for colname, dtype in df.schema.items()
@@ -176,20 +176,19 @@ def text_fields(
                 dummies = df[colname].to_dummies()
                 df = df.drop(colname).hstack(dummies)
             elif unique_values > biobert_embedding_cutoff:
-                pkl_path: Path = pacmap_cache / f"{colname}.pkl"
+                pkl_path: Path = pca_cache / f"{colname}.pkl"
                 single_column_embedding: list[torch.Tensor] = [
                     embedding_fn(x) for x in series
                 ]
-                pacmap_dr = PACMAP(
-                    n_neighbors=32,
+                dr_embedding = KernelPCA(
                     n_components=64,
                     random_state=seed,
                     backend="torch",
                     device="cpu",
-                ).fit(single_column_embedding)
-                joblib.dump(pacmap_dr, pkl_path)
+                ).fit_transform(single_column_embedding)
+                joblib.dump(KernelPCA, pkl_path)
                 embeddings.append(
-                    torch.stack(pacmap_dr.transform(single_column_embedding))
+                    torch.stack(dr_embedding)
                 )
                 texts.remove(colname)
                 embeddeds.append(colname)
