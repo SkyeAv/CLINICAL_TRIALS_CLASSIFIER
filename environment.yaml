@@ -1,0 +1,26 @@
+name: ct-classifier
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # -- PROD -- #
+  - python=3.11
+  - pytorch=2.3.0
+  - polars-lts-cpu
+  - ruamel.yaml
+  - pydantic
+  - typer
+  - fsspec
+  - joblib
+  - scikit-learn
+  - numpy
+  - transformers>=4.40
+  - tqdm
+  - xgboost
+  - loguru
+  # -- PROD.PIP -- #
+  - pip
+  - pip:
+    - -e .
+    - torchdr

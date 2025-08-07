@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-trials-classifier"
+version = "0.1.0"
+description = 'A XGBoost Classifier that Classifies Clinical Trials as "Likely Trustworthy" or "Likely Untrustworthy"'
+readme = { file = "README.md", content-type = "text/markdown" }
+authors = [
+  { name="Skye Lane Goetz", email="skye.lane.goetz@gmail.com" },
+  { name="Gwenlyn Glusman", email="gglusman@isbscience.org" },
+  { name="Jackie Lindstrom", email="jlindstr@isbscience.org" },
+]
+
+[tool.setuptools.packages]
+find = { where = ["."] }
+
+[project.scripts]
+cli = "src.ct_classifier.ui.cli:main"
