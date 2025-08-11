@@ -92,7 +92,7 @@ def boolean(
 ) -> tuple[pl.DataFrame, list[str]]:
     booleans: list[str] = []
     for colname, series in df.to_dict(as_series=True).items():
-        if is_boolean(series):
+        if series.dtype == pl.String and is_boolean(series):
             df = df.with_columns(
                 pl.col(colname).map_elements(
                     lambda x: 1 if str(x) == "t" else 0, return_dtype=pl.UInt8
@@ -175,6 +175,8 @@ def text_fields(
             unique_values: int = series.n_unique()
             if biobert_embedding_cutoff >= unique_values > min_cutoff:
                 dummies = df[colname].to_dummies()
+                texts.extend(dummies.columns)
+                texts.remove(colname)
                 df = df.drop(colname).hstack(dummies)
             elif unique_values > biobert_embedding_cutoff:
                 pkl_path: Path = pca_cache / f"{colname}.pkl"
@@ -211,6 +213,7 @@ def text_fields(
                 df = df.drop(colname)
             else:
                 df = df.drop(colname)
+                texts.remove(colname)
     return (df, texts, torch.stack(embeddings, dim=0), embeddeds)
 
 
@@ -237,6 +240,7 @@ def features(cfg: dict[str, Any], seed: int, mode: str) -> tuple[list[str], np.n
         df: pl.DataFrame = from_zipfiles(zip_path, tablename)
         if idx == 0:
             trial_identifiers: list[str] = df["nct_id"].to_list()
+        df = drop_identifiers(df)
         df, encoded_numerics = numeric(df, version, tablename, mode)
         df, encoded_booleans = boolean(df, version, tablename)
         df, encoded_texts, freetext_embeddings, embeddeds = text_fields(
