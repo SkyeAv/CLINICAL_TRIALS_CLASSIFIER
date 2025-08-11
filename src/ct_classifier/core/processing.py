@@ -1,3 +1,4 @@
+from torchdr.affinity import NormalizedGaussianAffinity
 from transformers import AutoTokenizer, AutoModel
 from sklearn.preprocessing import StandardScaler
 from functools import lru_cache, partial
@@ -180,13 +181,28 @@ def text_fields(
                 single_column_embedding: list[torch.Tensor] = [
                     embedding_fn(x) for x in series
                 ]
-                dr_embedding = KernelPCA(
+                with torch.no_grad():
+                    D: torch.Tensor = torch.cdist(
+                        single_column_embedding,
+                        single_column_embedding
+                    )
+                    sigma: torch.Tensor = torch.median(D[D > 0])
+                aff = NormalizedGaussianAffinity(
+                    sigma=sigma,
+                    zero_diag=False,
+                    backend="torch",
+                    device=DEVICE,
+                    _pre_processed=True,
+                )
+                kpca = KernelPCA(
+                    affinity=aff,
                     n_components=64,
                     random_state=seed,
                     backend="torch",
                     device="cpu",
-                ).fit_transform(single_column_embedding)
-                joblib.dump(KernelPCA, pkl_path)
+                )
+                dr_embedding = kpca.fit_transform(single_column_embedding)
+                joblib.dump(kpca, pkl_path)
                 embeddings.append(
                     torch.stack(dr_embedding)
                 )
