@@ -23,14 +23,18 @@ def set_seed(seed: int) -> None:
     return None
 
 
+def rename_with_tablename(df: pl.DataFrame, tablename: str) -> pl.DataFrame:
+    return df.rename({col: f"{tablename}::{col}" for col in df.columns})
+
+
 def from_zipfiles(zip_path: Path, tablename: str) -> pl.DataFrame:
     with fsspec.open(f"zip://{tablename}.txt::{zip_path.as_posix()}", mode="rt") as f:
-        return pl.read_csv(f, has_header=True, separator="|")
+        return rename_with_tablename(pl.read_csv(f, has_header=True, separator="|"), tablename)
 
 
-def drop_identifiers(df: pl.DataFrame) -> pl.DataFrame:
-    avoid: list[str] = ["id", "nct_id"]
-    return df.with_columns(df.select([col for col in df.columns if col not in avoid]))
+def drop_identifiers(df: pl.DataFrame, tablename: str) -> pl.DataFrame:
+    avoid: list[str] = [x for x in [f"{tablename}::id", f"{tablename}::nct_id"] if x in df.columns]
+    return df.drop(avoid)
 
 
 def scale(df: pl.DataFrame, colname: str, pkl_path: Path, mode: str) -> pl.DataFrame:
@@ -239,8 +243,9 @@ def features(cfg: dict[str, Any], seed: int, mode: str) -> tuple[list[str], np.n
     for idx, tablename in enumerate(cfg["tables_to_use"]):
         df: pl.DataFrame = from_zipfiles(zip_path, tablename)
         if idx == 0:
-            trial_identifiers: list[str] = df["nct_id"].to_list()
-        df = drop_identifiers(df)
+            trial_identifiers_colname: str = f"{tablename}::nct_id"
+            trial_identifiers: list[str] = df[trial_identifiers_colname].to_list()
+        df = drop_identifiers(df, tablename)
         df, encoded_numerics = numeric(df, version, tablename, mode)
         df, encoded_booleans = boolean(df, version, tablename)
         df, encoded_texts, freetext_embeddings, embeddeds = text_fields(
