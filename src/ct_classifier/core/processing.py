@@ -1,6 +1,6 @@
-from torchdr.affinity import NormalizedGaussianAffinity
 from transformers import AutoTokenizer, AutoModel
 from sklearn.preprocessing import StandardScaler
+from torchdr.affinity import GaussianAffinity
 from functools import lru_cache, partial
 from contextlib import contextmanager
 from typing import ContextManager
@@ -29,11 +29,15 @@ def rename_with_tablename(df: pl.DataFrame, tablename: str) -> pl.DataFrame:
 
 def from_zipfiles(zip_path: Path, tablename: str) -> pl.DataFrame:
     with fsspec.open(f"zip://{tablename}.txt::{zip_path.as_posix()}", mode="rt") as f:
-        return rename_with_tablename(pl.read_csv(f, has_header=True, separator="|"), tablename)
+        return rename_with_tablename(
+            pl.read_csv(f, has_header=True, separator="|"), tablename
+        )
 
 
 def drop_identifiers(df: pl.DataFrame, tablename: str) -> pl.DataFrame:
-    avoid: list[str] = [x for x in [f"{tablename}::id", f"{tablename}::nct_id"] if x in df.columns]
+    avoid: list[str] = [
+        x for x in [f"{tablename}::id", f"{tablename}::nct_id"] if x in df.columns
+    ]
     return df.drop(avoid)
 
 
@@ -184,34 +188,37 @@ def text_fields(
                 df = df.drop(colname).hstack(dummies)
             elif unique_values > biobert_embedding_cutoff:
                 pkl_path: Path = pca_cache / f"{colname}.pkl"
-                single_column_embedding: list[torch.Tensor] = [
-                    embedding_fn(x) for x in series
-                ]
-                with torch.no_grad():
-                    D: torch.Tensor = torch.cdist(
-                        single_column_embedding,
+                single_column_embedding: torch.Tensor = torch.stack(
+                    [embedding_fn(x) for x in series]
+                )
+                if not pkl_path.exists():
+                    with torch.no_grad():
+                        D: torch.Tensor = torch.cdist(
+                            single_column_embedding, single_column_embedding
+                        )
+                        sigma: torch.Tensor = torch.median(D[D > 0])
+                    aff = GaussianAffinity(
+                        sigma=sigma,
+                        zero_diag=False,
+                        backend="torch",
+                        device="cpu",
+                        _pre_processed=True,
+                    )
+                    kpca = KernelPCA(
+                        affinity=aff,
+                        n_components=64,
+                        random_state=seed,
+                        backend="torch",
+                        device="cpu",
+                    )
+                    dr_embedding: torch.Tensor = kpca.fit_transform(
                         single_column_embedding
                     )
-                    sigma: torch.Tensor = torch.median(D[D > 0])
-                aff = NormalizedGaussianAffinity(
-                    sigma=sigma,
-                    zero_diag=False,
-                    backend="torch",
-                    device=DEVICE,
-                    _pre_processed=True,
-                )
-                kpca = KernelPCA(
-                    affinity=aff,
-                    n_components=64,
-                    random_state=seed,
-                    backend="torch",
-                    device="cpu",
-                )
-                dr_embedding = kpca.fit_transform(single_column_embedding)
-                joblib.dump(kpca, pkl_path)
-                embeddings.append(
-                    torch.stack(dr_embedding)
-                )
+                    joblib.dump(kpca, pkl_path)
+                else:
+                    kpca = joblib.load(pkl_path)
+                    dr_embedding = kpca.transform(single_column_embedding)
+                embeddings.append(dr_embedding)
                 texts.remove(colname)
                 embeddeds.append(colname)
                 df = df.drop(colname)

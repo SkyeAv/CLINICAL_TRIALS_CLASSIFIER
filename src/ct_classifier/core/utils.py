@@ -1,8 +1,10 @@
 from pydantic import ValidationError, BaseModel
 from ruamel.yaml.error import YAMLError
 from typing import TypeVar, Any
+from datetime import datetime
 from ruamel.yaml import YAML
 from pathlib import Path
+import numpy as np
 import shutil
 import lzma
 
@@ -48,3 +50,9 @@ def xz_backup(db_p: Path, fmt: str = r"%Y%m%d") -> None:
     with db_p.open("rb") as f_in, lzma.open(xz_p, "wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
     return None
+
+
+def split_array(array: np.ndarray, x: str) -> tuple[np.ndarray, np.ndarray]:
+    idxs = np.flatnonzero(array == x)
+    split_idx: int = int(idxs[0])
+    return (array[: split_idx + 1], array[split_idx + 1 :])

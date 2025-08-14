@@ -1,4 +1,5 @@
 from sklearn.model_selection import train_test_split
+from src.ct_classifier.core.utils import split_array
 from sklearn.metrics import log_loss, roc_auc_score
 from typing import Any, Self
 from loguru import logger
@@ -20,8 +21,17 @@ def aggegate_inputs(
     in_gold: np.ndarray = np.isin(labels_np, gold_labels)
     in_pseudo: np.ndarray = np.isin(labels_np, pseudo_labels)
 
-    pos_mask: np.ndarray = in_gold | in_pseudo
-    neg_mask: np.ndarray = ~pos_mask
+    pos_gold_labels, neg_gold_labels = split_array(gold_labels, "negative")
+    pos_pseudo_labels, neg_pseudo_labels = split_array(pseudo_labels, "negative")
+
+    in_gold_pos: np.ndarray = np.isin(labels_np, pos_gold_labels)
+    in_gold_neg: np.ndarray = np.isin(labels_np, neg_gold_labels)
+
+    in_pseudo_pos: np.ndarray = np.isin(labels_np, pos_pseudo_labels)
+    in_pseudo_neg: np.ndarray = np.isin(labels_np, neg_pseudo_labels)
+
+    pos_mask: np.ndarray = in_gold_pos | in_pseudo_pos
+    neg_mask: np.ndarray = in_gold_neg | in_pseudo_neg
 
     orig_weights: np.ndarray = np.where(in_gold, 1.0, np.where(in_pseudo, 0.2, 0.0))
 
@@ -30,20 +40,10 @@ def aggegate_inputs(
     y_pos = np.ones(pos_indices.shape[0], dtype=int)
     w_pos = orig_weights[pos_indices]
 
-    number_of_random_trials: int = len(y_pos)
-
-    neg_indices_all = np.where(neg_mask)[0]
-    neg_indices = np.random.choice(
-        neg_indices_all, size=number_of_random_trials, replace=False
-    )
+    neg_indices = np.where(neg_mask)[0]
     X_neg = features[neg_indices]
-    y_neg = np.zeros(number_of_random_trials, dtype=int)
-
-    unique_weights, counts = np.unique(w_pos, return_counts=True)
-    proportions = counts / counts.sum()
-    w_neg = np.random.choice(
-        unique_weights, size=number_of_random_trials, p=proportions
-    )
+    y_neg = np.zeros(neg_indices.shape[0], dtype=int)
+    w_neg = orig_weights[neg_indices]
 
     X = np.vstack([X_pos, X_neg])
     y = np.concatenate([y_pos, y_neg])
@@ -54,13 +54,14 @@ def aggegate_inputs(
 
 def dmatrixes(
     seed: int, X: np.ndarray, y: np.ndarray, w: np.ndarray
-) -> tuple[xgb.DMatrix, xgb.DMatrix, np.ndarray]:
+) -> tuple[xgb.DMatrix, xgb.DMatrix, np.ndarray, float]:
     X_train, X_test, y_train, y_test, w_train, w_test = train_test_split(
         X, y, w, test_size=0.2, random_state=seed, stratify=y
     )
+    pos_weight: float = np.sum(y_train == 0) / np.sum(y_train == 1)
     dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
     dtest = xgb.DMatrix(X_test, label=y_test, weight=w_test)
-    return (dtrain, dtest, y_test)
+    return (dtrain, dtest, y_test, pos_weight)
 
 
 logger.remove()
@@ -96,7 +97,7 @@ def new_model(
     pseudo_labels: np.ndarray,
 ) -> None:
     X, y, w = aggegate_inputs(seed, labels, features, gold_labels, pseudo_labels)
-    dtrain, dtest, y_test = dmatrixes(seed, X, y, w)
+    dtrain, dtest, y_test, pos_weight = dmatrixes(seed, X, y, w)
     params: dict[str, Any] = {
         "objective": "binary:logistic",
         "eval_metric": ["auc", "logloss"],
@@ -110,6 +111,7 @@ def new_model(
         "reg_alpha": 0.5,
         "reg_lambda": 1.0,
         "tree_method": "hist",
+        "scale_pos_weight": pos_weight,
     }
     bst = xgb.train(
         params,
