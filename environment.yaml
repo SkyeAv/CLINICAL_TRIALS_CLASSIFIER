@@ -1,4 +1,4 @@
-name: ct-classifier
+name: ct-classifier-dev
 channels:
   - pytorch
   - conda-forge
@@ -6,9 +6,10 @@ channels:
 dependencies:
   # -- PROD -- #
   - python=3.11
-  - pytorch=2.3.0
+  - pytorch=2.6.0
   - polars-lts-cpu
   - ruamel.yaml
+  - accelerate
   - pydantic
   - typer
   - fsspec
@@ -19,8 +20,10 @@ dependencies:
   - tqdm
   - xgboost
   - loguru
+  - matplotlib
   # -- PROD.PIP -- #
   - pip
   - pip:
     - -e .
     - torchdr
+    - safetensors
