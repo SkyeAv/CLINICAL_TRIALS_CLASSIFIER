@@ -126,10 +126,11 @@ def suppress_tqdm() -> ContextManager:  # type: ignore
 
 
 def from_transformers(model_name: str) -> tuple[AutoTokenizer, AutoModel]:
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)  # type: ignore
     with suppress_tqdm():
+        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)  # type: ignore
         model = AutoModel.from_pretrained(
             model_name,
+            use_safetensors=None,
             device_map={"": "cpu"},
             torch_dtype="float32",
             low_cpu_mem_usage=False,

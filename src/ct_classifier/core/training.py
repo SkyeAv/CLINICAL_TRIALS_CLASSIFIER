@@ -21,8 +21,8 @@ def aggegate_inputs(
     in_gold: np.ndarray = np.isin(labels_np, gold_labels)
     in_pseudo: np.ndarray = np.isin(labels_np, pseudo_labels)
 
-    pos_gold_labels, neg_gold_labels = split_array(gold_labels, "negative")
-    pos_pseudo_labels, neg_pseudo_labels = split_array(pseudo_labels, "negative")
+    pos_gold_labels, neg_gold_labels = split_array(gold_labels, "[negative]")
+    pos_pseudo_labels, neg_pseudo_labels = split_array(pseudo_labels, "[negative]")
 
     in_gold_pos: np.ndarray = np.isin(labels_np, pos_gold_labels)
     in_gold_neg: np.ndarray = np.isin(labels_np, neg_gold_labels)
@@ -33,7 +33,7 @@ def aggegate_inputs(
     pos_mask: np.ndarray = in_gold_pos | in_pseudo_pos
     neg_mask: np.ndarray = in_gold_neg | in_pseudo_neg
 
-    orig_weights: np.ndarray = np.where(in_gold, 1.0, np.where(in_pseudo, 0.2, 0.0))
+    orig_weights: np.ndarray = np.where(in_gold, 1.0, np.where(in_pseudo, 0.1, 0.0))
 
     pos_indices = np.where(pos_mask)[0]
     X_pos = features[pos_indices]
