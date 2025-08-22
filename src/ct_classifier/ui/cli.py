@@ -22,7 +22,7 @@ def train_model(
     backup: bool = typer.Option(
         False,
         "-b",
-        "--backup-old-db",
+        "--backup-old-model",
         help="creates a timestamped xz compressed backup of the previous model",
     ),
 ) -> None:

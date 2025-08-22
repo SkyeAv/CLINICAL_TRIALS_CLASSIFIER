@@ -131,8 +131,8 @@ def from_transformers(model_name: str) -> tuple[AutoTokenizer, AutoModel]:
         model = AutoModel.from_pretrained(
             model_name,
             use_safetensors=None,
-            device_map={"": "cpu"},
-            torch_dtype="float32",
+            device_map="auto",
+            torch_dtype="auto",
             low_cpu_mem_usage=False,
         ).eval()
     return (tokenizer, model)
@@ -143,7 +143,7 @@ def biobert_embedding(
     tokenizer: AutoTokenizer, model: AutoModel, x: str
 ) -> torch.Tensor:
     inputs = tokenizer(x, return_tensors="pt", truncation=True, max_length=512)  # type: ignore
-    inputs = {k: v.to("cpu") for k, v in inputs.items()}
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     with torch.no_grad():
         outputs = model(**inputs)  # type: ignore
@@ -154,6 +154,18 @@ def biobert_embedding(
         return (  # type: ignore
             pooler_output.detach().cpu().float().squeeze()
         )  # shape: (768,)
+
+
+# to prevent the system from allocating 1.6TB of memory... :skull:
+def mean_pairwise_distance(X: torch.Tensor, device: Any, max_sample: int = 20_000) -> torch.Tensor:
+    X = X.to(device)
+    n: int = X.size(0)
+    samples: int = min(n, max_sample)
+    idxs: torch.Tensor = torch.randperm(n, device=device)[:samples]
+    X_samp = X.index_select(0, idxs)
+    D: torch.Tensor = torch.pdist(X_samp, p=2.0)
+    D = D[D > 0]
+    return torch.median(D)
 
 
 def text_fields(
@@ -170,6 +182,7 @@ def text_fields(
 ) -> tuple[pl.DataFrame, list[str], torch.Tensor, list[str]]:
     pca_cache: Path = CACHE_PATH / "PCA" / version / tablename
     pca_cache.mkdir(parents=True, exist_ok=True)
+    embed_cache: Path = CACHE_PATH / "EMBEDDINGS" / version / tablename
     texts: list[str] = [
         colname
         for colname, dtype in df.schema.items()
@@ -189,21 +202,24 @@ def text_fields(
                 df = df.drop(colname).hstack(dummies)
             elif unique_values > biobert_embedding_cutoff:
                 pkl_path: Path = pca_cache / f"{colname}.pkl"
-                single_column_embedding: torch.Tensor = torch.stack(
-                    [embedding_fn(x) for x in series]
-                )
+                embed_path: Path = embed_cache / f"{colname}_embedded.pkl"  # saves time
+                if not embed_path.exists():
+                    single_column_embedding: torch.Tensor = torch.stack(
+                        [embedding_fn(x) for x in series]
+                    )
+                    joblib.dump(single_column_embedding, embed_path)
+                else:
+                    single_column_embedding = joblib.load(embed_path)
                 if not pkl_path.exists():
                     with torch.no_grad():
-                        D: torch.Tensor = torch.cdist(
-                            single_column_embedding, single_column_embedding
+                        sigma: torch.Tensor = mean_pairwise_distance(
+                            single_column_embedding, model.device
                         )
-                        sigma: torch.Tensor = torch.median(D[D > 0])
                     aff = GaussianAffinity(
                         sigma=sigma,
                         zero_diag=False,
                         backend="torch",
                         device="cpu",
-                        _pre_processed=True,
                     )
                     kpca = KernelPCA(
                         affinity=aff,
