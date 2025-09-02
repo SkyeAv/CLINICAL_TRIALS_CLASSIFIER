@@ -157,7 +157,7 @@ def biobert_embedding(
 
 
 # to prevent the system from allocating 1.6TB of memory... :skull:
-def mean_pairwise_distance(X: torch.Tensor, device: Any, max_sample: int = 20_000) -> torch.Tensor:
+def mean_pairwise_distance(X: torch.Tensor, device: Any, max_sample: int = 10_000) -> tuple[torch.Tensor, torch.Tensor]:
     X = X.to(device)
     n: int = X.size(0)
     samples: int = min(n, max_sample)
@@ -165,7 +165,7 @@ def mean_pairwise_distance(X: torch.Tensor, device: Any, max_sample: int = 20_00
     X_samp = X.index_select(0, idxs)
     D: torch.Tensor = torch.pdist(X_samp, p=2.0)
     D = D[D > 0]
-    return torch.median(D)
+    return torch.median(D), X_samp
 
 
 def text_fields(
@@ -183,6 +183,7 @@ def text_fields(
     pca_cache: Path = CACHE_PATH / "PCA" / version / tablename
     pca_cache.mkdir(parents=True, exist_ok=True)
     embed_cache: Path = CACHE_PATH / "EMBEDDINGS" / version / tablename
+    embed_cache.mkdir(parents=True, exist_ok=True)
     texts: list[str] = [
         colname
         for colname, dtype in df.schema.items()
@@ -205,18 +206,18 @@ def text_fields(
                 embed_path: Path = embed_cache / f"{colname}_embedded.pkl"  # saves time
                 if not embed_path.exists():
                     single_column_embedding: torch.Tensor = torch.stack(
-                        [embedding_fn(x) for x in series]
+                        [embedding_fn(x) if x and str(x).strip() else torch.normal(0, 1e-10, size=(768,)) for x in series]
                     )
                     joblib.dump(single_column_embedding, embed_path)
                 else:
                     single_column_embedding = joblib.load(embed_path)
                 if not pkl_path.exists():
                     with torch.no_grad():
-                        sigma: torch.Tensor = mean_pairwise_distance(
+                        sigma, samp = mean_pairwise_distance(
                             single_column_embedding, model.device
                         )
                     aff = GaussianAffinity(
-                        sigma=sigma,
+                        sigma=sigma.detach().cpu().item(),
                         zero_diag=False,
                         backend="torch",
                         device="cpu",
@@ -228,13 +229,16 @@ def text_fields(
                         backend="torch",
                         device="cpu",
                     )
-                    dr_embedding: torch.Tensor = kpca.fit_transform(
-                        single_column_embedding
+                    kpca.fit(samp)
+                    dr_embedding: torch.Tensor = kpca.transform(
+                        single_column_embedding.detach().cpu()
                     )
                     joblib.dump(kpca, pkl_path)
                 else:
                     kpca = joblib.load(pkl_path)
-                    dr_embedding = kpca.transform(single_column_embedding)
+                    dr_embedding = kpca.transform(
+                        single_column_embedding.detach().cpu()
+                    )
                 embeddings.append(dr_embedding)
                 texts.remove(colname)
                 embeddeds.append(colname)
@@ -242,7 +246,9 @@ def text_fields(
             else:
                 df = df.drop(colname)
                 texts.remove(colname)
-    return (df, texts, torch.stack(embeddings, dim=0), embeddeds)
+    if embeddings:
+        embeddings = torch.stack(embeddings, dim=0)
+    return (df, texts, embeddings, embeddeds)
 
 
 def features(cfg: dict[str, Any], seed: int, mode: str) -> tuple[list[str], np.ndarray]:
@@ -286,13 +292,18 @@ def features(cfg: dict[str, Any], seed: int, mode: str) -> tuple[list[str], np.n
             ]
             df = df.with_columns(df.select(encoded_cols_to_keep))
         encoded_cols.extend(encoded_cols_in_df + embeddeds)
-        table_embeddings: torch.Tensor = torch.cat(
-            [
-                torch.from_numpy(df.to_numpy()).float(),
-                freetext_embeddings.transpose(0, 1).flatten(start_dim=1),
-            ],
-            dim=1,
-        )
+        if df.is_empty() and not isinstance(freetext_embeddings, list):
+            table_embeddings: torch.Tensor = freetext_embeddings.transpose(0, 1).flatten(start_dim=1)
+        elif not df.is_empty() and isinstance(freetext_embeddings, list):
+            table_embeddings = torch.from_numpy(df.to_numpy()).float()
+        else:
+            table_embeddings = torch.cat(
+                [
+                    torch.from_numpy(df.to_numpy()).float(),
+                    freetext_embeddings.transpose(0, 1).flatten(start_dim=1),
+                ],
+                dim=1,
+            )
         all_embeddings.append(table_embeddings)
     feature_tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
     if mode == "training":

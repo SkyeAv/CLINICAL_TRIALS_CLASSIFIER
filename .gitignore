@@ -1,0 +1,5 @@
+*__pycache__/
+*clinical_trials_classifier.egg-info
+*.out
+*CACHE/
+*result/
